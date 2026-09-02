@@ -1,6 +1,7 @@
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.config import settings
 from app.database import Base, SessionLocal, engine
 from app.dependencies import get_current_user
 from app.models import Job, JobTemplate, RealJob, ScrapeSession, User, UserImportedRealJob, UserImportedTemplate  # noqa: F401
@@ -11,12 +12,13 @@ from app.services.real_jobs import seed_real_jobs
 
 Base.metadata.create_all(bind=engine)
 
-with engine.connect() as connection:
-    columns = connection.exec_driver_sql("PRAGMA table_info(jobs)").fetchall()
-    column_names = {column[1] for column in columns}
-    if columns and "is_real" not in column_names:
-        connection.exec_driver_sql("ALTER TABLE jobs ADD COLUMN is_real BOOLEAN NOT NULL DEFAULT 0")
-        connection.commit()
+if settings.database_url.startswith("sqlite"):
+    with engine.connect() as connection:
+        columns = connection.exec_driver_sql("PRAGMA table_info(jobs)").fetchall()
+        column_names = {column[1] for column in columns}
+        if columns and "is_real" not in column_names:
+            connection.exec_driver_sql("ALTER TABLE jobs ADD COLUMN is_real BOOLEAN NOT NULL DEFAULT 0")
+            connection.commit()
 
 with SessionLocal() as db:
     seed_job_templates(db)
@@ -24,9 +26,15 @@ with SessionLocal() as db:
 
 app = FastAPI(title="Iasty Bid API", version="1.0.0")
 
+cors_origins = {
+    settings.frontend_url.rstrip("/"),
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+}
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=sorted(cors_origins),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
