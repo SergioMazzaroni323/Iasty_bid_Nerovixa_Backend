@@ -1,5 +1,7 @@
 from pydantic import BaseModel, EmailStr, Field
 
+from app.models.user import UserRole, UserStatus
+
 
 class RegisterRequest(BaseModel):
     email: EmailStr
@@ -33,5 +35,7 @@ class UserResponse(BaseModel):
     id: int
     email: str
     is_verified: bool
+    role: UserRole = UserRole.user
+    status: UserStatus = UserStatus.pending
 
     model_config = {"from_attributes": True}

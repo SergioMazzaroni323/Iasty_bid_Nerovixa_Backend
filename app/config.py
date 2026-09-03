@@ -21,5 +21,7 @@ class Settings(BaseSettings):
     verification_token_expire_hours: int = 24
     reset_token_expire_hours: int = 1
 
+    admin_email: str = "hoyosnohor@gmail.com"
+
 
 settings = Settings()

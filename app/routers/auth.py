@@ -5,7 +5,8 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.database import get_db
-from app.models.user import User
+from app.dependencies import ensure_admin_privileges
+from app.models.user import User, UserRole, UserStatus
 from app.schemas.auth import (
     ForgotPasswordRequest,
     LoginRequest,
@@ -30,6 +31,10 @@ from app.services.security import (
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
+def _is_admin_email(email: str) -> bool:
+    return email.lower() == settings.admin_email.lower()
+
+
 @router.post("/register", response_model=MessageResponse, status_code=status.HTTP_201_CREATED)
 def register(payload: RegisterRequest, db: Session = Depends(get_db)):
     email = payload.email.lower()
@@ -38,10 +43,13 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email already registered")
 
     token = generate_token()
+    is_admin = _is_admin_email(email)
     user = User(
         email=email,
         hashed_password=hash_password(payload.password),
         is_verified=False,
+        role=UserRole.admin if is_admin else UserRole.user,
+        status=UserStatus.active if is_admin else UserStatus.pending,
         verification_token=token,
         verification_token_expires=utcnow() + timedelta(hours=settings.verification_token_expire_hours),
     )
@@ -74,9 +82,19 @@ def verify_email(token: str, db: Session = Depends(get_db)):
     user.is_verified = True
     user.verification_token = None
     user.verification_token_expires = None
+    ensure_admin_privileges(user)
+
+    if user.role != UserRole.admin:
+        user.status = UserStatus.pending
+
     db.commit()
 
-    return MessageResponse(message="Email verified successfully. You can now log in.")
+    if user.role == UserRole.admin:
+        return MessageResponse(message="Email verified successfully. You can now log in.")
+
+    return MessageResponse(
+        message="Email verified successfully. Your account is pending admin approval before you can log in."
+    )
 
 
 @router.post("/resend-verification", response_model=MessageResponse)
@@ -92,7 +110,7 @@ def resend_verification(payload: ForgotPasswordRequest, db: Session = Depends(ge
     if user.is_verified:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Email is already verified. You can log in.",
+            detail="Email is already verified. You can log in after admin approval.",
         )
 
     token = generate_token()
@@ -120,10 +138,33 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
     if not user or not verify_password(payload.password, user.hashed_password):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password")
 
+    if ensure_admin_privileges(user):
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+
     if not user.is_verified:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Email not verified. Please check your inbox for the verification link.",
+        )
+
+    if user.status == UserStatus.pending:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Your account is pending admin approval.",
+        )
+
+    if user.status == UserStatus.deactive:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Your account has been deactivated. Contact an administrator.",
+        )
+
+    if user.status != UserStatus.active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Your account is not active.",
         )
 
     return TokenResponse(access_token=create_access_token(user.email))
@@ -134,7 +175,7 @@ def forgot_password(payload: ForgotPasswordRequest, db: Session = Depends(get_db
     email = payload.email.lower()
     user = get_user_by_email(db, email)
 
-    if user:
+    if user and user.status != UserStatus.deactive:
         token = generate_token()
         user.reset_token = token
         user.reset_token_expires = utcnow() + timedelta(hours=settings.reset_token_expire_hours)
