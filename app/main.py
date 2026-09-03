@@ -26,9 +26,12 @@ def migrate_schema() -> None:
         if "status" not in columns:
             connection.execute(text("ALTER TABLE users ADD COLUMN status VARCHAR(32) NOT NULL DEFAULT 'pending'"))
             # Existing verified accounts stay usable after deploy
-            connection.execute(
-                text("UPDATE users SET status = 'active' WHERE is_verified = true OR is_verified = 1")
-            )
+            if settings.database_url.startswith("sqlite"):
+                connection.execute(
+                    text("UPDATE users SET status = 'active' WHERE is_verified = 1 OR is_verified = true")
+                )
+            else:
+                connection.execute(text("UPDATE users SET status = 'active' WHERE is_verified = true"))
 
         if "jobs" in inspector.get_table_names():
             job_columns = {column["name"] for column in inspector.get_columns("jobs")}
