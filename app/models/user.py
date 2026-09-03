@@ -26,13 +26,21 @@ class User(Base):
     hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
     is_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     role: Mapped[UserRole] = mapped_column(
-        Enum(UserRole, native_enum=False),
+        Enum(
+            UserRole,
+            native_enum=False,
+            values_callable=lambda enum_cls: [item.value for item in enum_cls],
+        ),
         default=UserRole.user,
         nullable=False,
         index=True,
     )
     status: Mapped[UserStatus] = mapped_column(
-        Enum(UserStatus, native_enum=False),
+        Enum(
+            UserStatus,
+            native_enum=False,
+            values_callable=lambda enum_cls: [item.value for item in enum_cls],
+        ),
         default=UserStatus.pending,
         nullable=False,
         index=True,

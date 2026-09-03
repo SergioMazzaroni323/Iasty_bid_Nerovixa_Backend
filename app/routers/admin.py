@@ -9,7 +9,7 @@ from app.database import get_db
 from app.dependencies import get_current_admin
 from app.models.job import Job
 from app.models.scrape_session import ScrapeSession, UserImportedRealJob, UserImportedTemplate
-from app.models.user import User, UserRole, UserStatus
+from app.models.user import User, UserStatus
 from app.schemas.auth import MessageResponse, UserResponse
 from app.services import gmail
 from app.services.security import generate_token, hash_password, utcnow
@@ -57,7 +57,7 @@ def list_users(
     )
 
 
-@router.patch("/users/{user_id}/status", response_model=AdminUserResponse)
+@router.post("/users/{user_id}/status", response_model=AdminUserResponse)
 def update_user_status(
     user_id: int,
     payload: UpdateStatusRequest,
@@ -68,23 +68,21 @@ def update_user_status(
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
-    if user.email.lower() == settings.admin_email.lower() and payload.status != UserStatus.active:
+    if user.email.lower() == settings.admin_email.lower():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Cannot change the primary admin account status",
         )
 
-    if payload.status == UserStatus.active and not user.is_verified:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Cannot activate an unverified account",
-        )
+    next_status = UserStatus(payload.status)
 
-    user.status = payload.status
-    if user.email.lower() == settings.admin_email.lower():
-        user.role = UserRole.admin
-        user.status = UserStatus.active
+    if next_status == UserStatus.active and not user.is_verified:
+        # Admin approval also confirms the account is ready to use
+        user.is_verified = True
+        user.verification_token = None
+        user.verification_token_expires = None
 
+    user.status = next_status
     db.commit()
     db.refresh(user)
     return _serialize_user(user)
